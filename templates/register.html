@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - Go Passkey Auth Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            text-align: center;
+            margin-top: 50px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="text"] {
+            padding: 8px;
+            width: 300px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .message {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Register with Passkey</h1>
+        
+        <div id="register-form">
+            <div class="form-group">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            
+            <button id="register-button">Register</button>
+        </div>
+        
+        <div id="message" class="message" style="display: none;"></div>
+        
+        <div style="margin-top: 20px;">
+            <a href="/">Back to Home</a>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('register-button').addEventListener('click', async () => {
+            const username = document.getElementById('username').value;
+            
+            if (!username) {
+                showMessage('Please enter a username', 'error');
+                return;
+            }
+            
+            try {
+                // Begin registration
+                const beginResponse = await fetch('/register/begin', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `username=${encodeURIComponent(username)}`
+                });
+                
+                if (!beginResponse.ok) {
+                    const errorText = await beginResponse.text();
+                    throw new Error(errorText);
+                }
+                
+                const credentialCreationOptions = await beginResponse.json();
+                
+                // Convert base64 strings to ArrayBuffer
+                credentialCreationOptions.publicKey.challenge = base64URLToArrayBuffer(credentialCreationOptions.publicKey.challenge);
+                
+                if (credentialCreationOptions.publicKey.user && credentialCreationOptions.publicKey.user.id) {
+                    credentialCreationOptions.publicKey.user.id = base64URLToArrayBuffer(credentialCreationOptions.publicKey.user.id);
+                }
+                
+                if (credentialCreationOptions.publicKey.excludeCredentials) {
+                    credentialCreationOptions.publicKey.excludeCredentials = credentialCreationOptions.publicKey.excludeCredentials.map(cred => {
+                        return {
+                            ...cred,
+                            id: base64URLToArrayBuffer(cred.id)
+                        };
+                    });
+                }
+                
+                // Create credential
+                const credential = await navigator.credentials.create({
+                    publicKey: credentialCreationOptions.publicKey
+                });
+                
+                // Prepare credential for sending to server
+                const credentialResponse = {
+                    id: credential.id,
+                    rawId: arrayBufferToBase64URL(credential.rawId),
+                    type: credential.type,
+                    response: {
+                        attestationObject: arrayBufferToBase64URL(credential.response.attestationObject),
+                        clientDataJSON: arrayBufferToBase64URL(credential.response.clientDataJSON)
+                    }
+                };
+                
+                // Finish registration
+                const finishResponse = await fetch('/register/finish', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(credentialResponse)
+                });
+                
+                if (!finishResponse.ok) {
+                    const errorText = await finishResponse.text();
+                    throw new Error(errorText);
+                }
+                
+                const result = await finishResponse.json();
+                showMessage('Registration successful! You can now log in.', 'success');
+                
+                // Hide form after successful registration
+                document.getElementById('register-form').style.display = 'none';
+                
+                // Add a login link
+                const messageDiv = document.getElementById('message');
+                messageDiv.innerHTML += '<p><a href="/login">Go to Login</a></p>';
+                
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            }
+        });
+        
+        function showMessage(message, type) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.textContent = message;
+            messageDiv.className = `message ${type}`;
+            messageDiv.style.display = 'block';
+        }
+        
+        // Base64URL to ArrayBuffer
+        function base64URLToArrayBuffer(base64URL) {
+            const base64 = base64URL.replace(/-/g, '+').replace(/_/g, '/');
+            const padLen = (4 - (base64.length % 4)) % 4;
+            const padded = base64.padEnd(base64.length + padLen, '=');
+            const binary = atob(padded);
+            const buffer = new ArrayBuffer(binary.length);
+            const view = new Uint8Array(buffer);
+            
+            for (let i = 0; i < binary.length; i++) {
+                view[i] = binary.charCodeAt(i);
+            }
+            
+            return buffer;
+        }
+        
+        // ArrayBuffer to Base64URL
+        function arrayBufferToBase64URL(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            
+            const base64 = btoa(binary);
+            return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+    </script>
+</body>
+</html>
